@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "Maison Veyron",
+    "slug": "demo-store",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1A1A2E"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.maisonveyron.ios"
+    },
+    "android": {
+      "package": "com.maisonveyron.android",
+      "adaptiveIcon": {
+        "backgroundColor": "#1A1A2E",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "_comment": "White-label config — replace all placeholder values before building. Run scripts/deploy-client.js to patch these automatically.",
+      "shopifyStoreUrl": "https://maisonveyron.myshopify.com",
+      "primaryColor": "#1A1A2E",
+      "secondaryColor": "#C9A96E",
+      "firebase": {
+        "apiKey": "AIzaSyDEMO-MaisonVeyron-FakeKey-XXXXXXXX",
+        "authDomain": "maisonveyron-app.firebaseapp.com",
+        "projectId": "maisonveyron-app",
+        "storageBucket": "maisonveyron-app.appspot.com",
+        "messagingSenderId": "900123456789",
+        "appId": "1:900123456789:web:demo0abc1234567890demo"
+      },
+      "eas": {
+        "projectId": "demo-eas-0000-0000-0000-maisonveyron"
+      }
+    }
+  }
+}

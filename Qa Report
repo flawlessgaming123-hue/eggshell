@@ -1,0 +1,353 @@
+# QA Report — White-Label Hybrid Shopify App
+**Reviewed:** 2026-03-05 | **Reviewer role:** QA Engineer | **SDK target:** Expo 55 / RN 0.76+
+
+---
+
+## Bug Tickets
+
+---
+
+**Bug ID**: BUG-1
+
+**Severity**: Critical
+
+**Status**: 🐛 Open
+
+**Agent Role**: You are the Backend Bug Fix Specialist for a hybrid Shopify app.
+
+**Affected File(s)**: `src/utils/notifications.js`
+
+**Description**: The Firebase config object (lines 4–12) contains empty strings for every field and is committed to source control. Any build that ships with these blank values will silently fail to initialise Firebase, meaning no push tokens will ever be retrieved and the entire notification system will be dead on arrival.
+
+**Steps to Reproduce / Root Cause**: Lines 4–12 declare `firebaseConfig` with all fields as `''`. `initializeApp(firebaseConfig)` on line 23 will succeed without throwing (Firebase validates lazily), but every subsequent SDK call (`getExpoPushTokenAsync`, Firestore, etc.) will reject with "Firebase: No Firebase App '[DEFAULT]' has been created" or auth/API key errors at runtime.
+
+**Technical Constraints**:
+- Fix only `src/utils/notifications.js`.
+- Do not change unrelated logic, navigation, or other phases' files.
+- The fix must be compatible with Expo SDK 55 and React Native 0.76+.
+
+**Dependencies**: Receives nothing upstream. Passes a valid Firebase app instance to all notification utilities consumed by `InboxScreen.js`.
+
+**Deliverables**: Replace the hardcoded config object with a pattern that pulls values from Expo's `Constants.expoConfig.extra` (via `app.json` / `app.config.js`) so secrets are never committed. Provide the corrected `notifications.js`.
+
+---
+
+**Bug ID**: BUG-2
+
+**Severity**: Critical
+
+**Status**: 🐛 Open
+
+**Agent Role**: You are the Frontend Bug Fix Specialist for a hybrid Shopify app.
+
+**Affected File(s)**: `src/utils/notifications.js`
+
+**Description**: `Notifications.getExpoPushTokenAsync()` is called on line 68 without passing a `projectId`. On Expo SDK 49+ this argument is **required** for bare/managed workflow builds that do not use EAS; omitting it causes the call to throw `"projectId must be provided"` in production, returning `null` and silently disabling push for all iOS users.
+
+**Steps to Reproduce / Root Cause**: Line 68: `const tokenData = await Notifications.getExpoPushTokenAsync();` — no options object is passed. The Expo docs for SDK 49+ require `{ projectId: Constants.expoConfig.extra.eas.projectId }` or equivalent.
+
+**Technical Constraints**:
+- Fix only `src/utils/notifications.js`.
+- Do not change unrelated logic, navigation, or other phases' files.
+- The fix must be compatible with Expo SDK 55 and React Native 0.76+.
+
+**Dependencies**: Receives the EAS `projectId` from `app.json`/`app.config.js` `extra` block. The returned token is logged but currently not persisted or sent to a backend — a follow-up task should handle token registration.
+
+**Deliverables**: Pass `{ projectId }` sourced from `Constants.expoConfig.extra.eas.projectId` (with a safe fallback) to `getExpoPushTokenAsync`. Provide the corrected `notifications.js`.
+
+---
+
+**Bug ID**: BUG-3
+
+**Severity**: High
+
+**Status**: 🐛 Open
+
+**Agent Role**: You are the Full-Stack Bug Fix Specialist for a hybrid Shopify app.
+
+**Affected File(s)**: `functions/fcm.js`, `src/utils/notifications.js`
+
+**Description**: The Android notification channel ID used by the Cloud Functions (`"shopify_notifications"`, line 33 / 70 in `fcm.js`) does not match the channel created on the device (`"default"`, line 44 in `notifications.js`). On Android 8+, a notification delivered to a non-existent channel is **silently dropped** — the user never sees it.
+
+**Steps to Reproduce / Root Cause**:
+- `notifications.js` line 44: `setNotificationChannelAsync('default', …)` — creates a channel named `"default"`.
+- `fcm.js` lines 33 & 70: `channelId: "shopify_notifications"` — targets a channel that was never registered.
+- Android drops the message with no error surfaced to the developer.
+
+**Technical Constraints**:
+- Fix both `functions/fcm.js` and `src/utils/notifications.js` (or fix one to match the other — pick a single canonical name).
+- Do not change unrelated logic, navigation, or other phases' files.
+- The fix must be compatible with Expo SDK 55 and React Native 0.76+.
+
+**Dependencies**: `fcm.js` sends the channel ID inside the FCM `android.notification` block. `notifications.js` registers the channel client-side during `registerForPushNotificationsAsync`. Both must use the same string.
+
+**Deliverables**: Standardise on one channel ID (e.g. `"default"`) in both files. Provide the corrected `fcm.js` and `notifications.js`.
+
+---
+
+**Bug ID**: BUG-4
+
+**Severity**: High
+
+**Status**: 🐛 Open
+
+**Agent Role**: You are the Backend Bug Fix Specialist for a hybrid Shopify app.
+
+**Affected File(s)**: `functions/verifyShopifyWebhook.js`
+
+**Description**: The HMAC comparison on lines 52–54 will throw an uncaught `TypeError` (`"Input buffers must have the same byte length"`) whenever an attacker sends a malformed HMAC header of a different length than the server-computed digest, because `crypto.timingSafeEqual` requires **equal-length** Buffers. Although the length pre-check on line 53 is present, it is *evaluated inside a single `&&` expression that still constructs both `Buffer.from` calls before the comparison* — but more critically, if `shopifyHmac` contains non-ASCII characters the `Buffer.from(shopifyHmac)` byte length may differ from `Buffer.from(digest)` even when the string lengths match, causing a crash and a 500 to be sent to Shopify (which triggers retries, amplifying the surface).
+
+**Steps to Reproduce / Root Cause**: Lines 52–54:
+```js
+const isValid =
+    shopifyHmac.length === digest.length &&
+    crypto.timingSafeEqual(Buffer.from(shopifyHmac), Buffer.from(digest));
+```
+`shopifyHmac.length` is the UTF-16 code-unit count; `Buffer.from()` uses UTF-8 encoding. A multi-byte character in the header makes the Buffer lengths diverge even when string lengths match.
+
+**Technical Constraints**:
+- Fix only `functions/verifyShopifyWebhook.js`.
+- Do not change unrelated logic, navigation, or other phases' files.
+- The fix must be compatible with Expo SDK 55 and React Native 0.76+.
+
+**Dependencies**: Sits between raw HTTP ingress and all handler logic. Must accept a valid buffer and reject gracefully.
+
+**Deliverables**: Convert BOTH strings to `Buffer` first, then compare `.length` on the Buffers (not the strings), and only call `timingSafeEqual` when lengths match. Provide the corrected `verifyShopifyWebhook.js`.
+
+---
+
+**Bug ID**: BUG-5
+
+**Severity**: High
+
+**Status**: 🐛 Open
+
+**Agent Role**: You are the Frontend Bug Fix Specialist for a hybrid Shopify app.
+
+**Affected File(s)**: `src/screens/InboxScreen.js`
+
+**Description**: The async IIFE inside the `useEffect` on lines 91–95 (`registerForPushNotificationsAsync` + `loadNotifications` + `setLoading(false)`) has no `try/catch`. If `registerForPushNotificationsAsync` throws (e.g., a native module not linked, or an OS permission API error), `setLoading(false)` is never called, leaving the screen permanently showing the loading spinner with no error message shown to the user.
+
+**Steps to Reproduce / Root Cause**: Lines 91–95:
+```js
+(async () => {
+    await registerForPushNotificationsAsync();
+    await loadNotifications();
+    setLoading(false);
+})();
+```
+An unhandled rejection propagates silently; the component hangs.
+
+**Technical Constraints**:
+- Fix only `src/screens/InboxScreen.js`.
+- Do not change unrelated logic, navigation, or other phases' files.
+- The fix must be compatible with Expo SDK 55 and React Native 0.76+.
+
+**Dependencies**: Calls `registerForPushNotificationsAsync` from `notifications.js` and `loadNotifications` (internal). Result drives the `loading` state gate.
+
+**Deliverables**: Wrap the async IIFE body in `try/catch`, call `setLoading(false)` in a `finally` block, and surface an error state in the UI. Provide the corrected `InboxScreen.js`.
+
+---
+
+**Bug ID**: BUG-6
+
+**Severity**: High
+
+**Status**: 🐛 Open
+
+**Agent Role**: You are the Frontend Bug Fix Specialist for a hybrid Shopify app.
+
+**Affected File(s)**: `src/screens/InboxScreen.js`
+
+**Description**: The foreground notification listener callback on lines 98–102 is `async` but its promise is never awaited or caught. If `saveNotification` or the subsequent `AsyncStorage.getItem` throws, the error is an unhandled promise rejection that will crash the app on React Native's strict rejection handling mode (default in RN 0.73+).
+
+**Steps to Reproduce / Root Cause**: Lines 98–101:
+```js
+listenerRef.current = Notifications.addNotificationReceivedListener(async notification => {
+    await saveNotification(notification);
+    const raw = await AsyncStorage.getItem(INBOX_STORAGE_KEY);
+    setNotifications(raw ? JSON.parse(raw) : []);
+});
+```
+`addNotificationReceivedListener` does not handle rejections from async callbacks; any throw becomes an unhandled rejection.
+
+**Technical Constraints**:
+- Fix only `src/screens/InboxScreen.js`.
+- Do not change unrelated logic, navigation, or other phases' files.
+- The fix must be compatible with Expo SDK 55 and React Native 0.76+.
+
+**Dependencies**: Calls `saveNotification` from `notifications.js` and `AsyncStorage`. Writes to the `notifications` state.
+
+**Deliverables**: Wrap the listener callback body in `try/catch`. Provide the corrected `InboxScreen.js`.
+
+---
+
+**Bug ID**: BUG-7
+
+**Severity**: High
+
+**Status**: 🐛 Open
+
+**Agent Role**: You are the Frontend Bug Fix Specialist for a hybrid Shopify app.
+
+**Affected File(s)**: `src/screens/HomeScreen.js`
+
+**Description**: The `WebView` has no `onError` or `onHttpError` handler. When the Shopify store URL is unreachable (e.g., network offline, DNS failure, HTTP 5xx), the WebView renders a native browser error page inside the app, with no retry button or user-friendly message. This is a common App Store rejection reason for WebView-based apps.
+
+**Steps to Reproduce / Root Cause**: Lines 80–95: the `<WebView>` component defines `onLoadStart` and `onLoadEnd` but no `onError` or `onHttpError` prop. Airplane-mode test or an invalid store URL will trigger the error case.
+
+**Technical Constraints**:
+- Fix only `src/screens/HomeScreen.js`.
+- Do not change unrelated logic, navigation, or other phases' files.
+- The fix must be compatible with Expo SDK 55 and React Native 0.76+.
+
+**Dependencies**: Standalone — error state is contained within `HomeScreen`.
+
+**Deliverables**: Add an `onError`/`onHttpError` handler that sets an `error` state, and render a native error UI (with a retry button that calls `webviewRef.current.reload()`) when the error state is truthy. Provide the corrected `HomeScreen.js`.
+
+---
+
+**Bug ID**: BUG-8
+
+**Severity**: High
+
+**Status**: 🐛 Open
+
+**Agent Role**: You are the Full-Stack Bug Fix Specialist for a hybrid Shopify app.
+
+**Affected File(s)**: `src/utils/notifications.js`
+
+**Description**: The `import` statements on lines 15–19 appear **after** the `firebaseConfig` object declaration and the `initializeApp` call on lines 4–23. In standard ES module parsing the hoisting rules mean `import` declarations are hoisted to the top, so this does not cause a runtime crash in Babel-transpiled Expo — however, the `const firebaseConfig = { … }` block is placed before the imports syntactically, making the code extremely misleading and fragile. More importantly, `initializeApp(firebaseConfig)` on line 23 executes **before** any ESM tree-shaking or conditional logic, meaning a blank config will always run and register a broken Firebase app on every app start.
+
+**Steps to Reproduce / Root Cause**: Lines 1–24: `const firebaseConfig` and `initializeApp` are declared before `import` statements. With Babel's CommonJS transform this will still work, but ESLint's `import/first` rule (and any strict ESM bundler) will flag or break this. Combined with BUG-1 (empty config), the broken app initialisation is guaranteed to run.
+
+**Technical Constraints**:
+- Fix only `src/utils/notifications.js`.
+- Do not change unrelated logic, navigation, or other phases' files.
+- The fix must be compatible with Expo SDK 55 and React Native 0.76+.
+
+**Dependencies**: Affects the module load sequence; resolved by BUG-1 fix but must be corrected independently for code quality and linter compliance.
+
+**Deliverables**: Move all `import` statements to the top of the file. Provide the corrected `notifications.js`.
+
+---
+
+**Bug ID**: BUG-9
+
+**Severity**: Medium
+
+**Status**: 🐛 Open
+
+**Agent Role**: You are the Full-Stack Bug Fix Specialist for a hybrid Shopify app.
+
+**Affected File(s)**: `src/screens/HomeScreen.js`, `functions/handlers/orders.js`, `functions/handlers/checkouts.js`, `functions/handlers/products.js`
+
+**Description**: Multiple white-label configuration values are hardcoded in source files rather than being driven by a config layer, creating a multi-client deployment risk. Specifically: (1) `SHOPIFY_STORE_URL = 'https://your-store.myshopify.com'` in `HomeScreen.js` (line 13) is a placeholder that will ship verbatim if missed; (2) All handler files hardcode the FCM topic `"all_staff"` — a different client may require a namespaced topic or customer-specific targeting.
+
+**Steps to Reproduce / Root Cause**: `HomeScreen.js` line 13; `orders.js` lines 33, 62, 95, 124; `checkouts.js` lines 29, 69; `products.js` lines 28, 56.
+
+**Technical Constraints**:
+- Fix the affected files listed above.
+- Do not change unrelated logic, navigation, or other phases' files.
+- The fix must be compatible with Expo SDK 55 and React Native 0.76+.
+
+**Dependencies**: `HomeScreen.js` reads the store URL; Cloud Function handlers read the FCM topic. Both should be driven by per-client environment config.
+
+**Deliverables**: Source `SHOPIFY_STORE_URL` from `Constants.expoConfig.extra` and the FCM topic from a Cloud Function environment param. Provide the corrected files.
+
+---
+
+**Bug ID**: BUG-10
+
+**Severity**: Medium
+
+**Status**: 🐛 Open
+
+**Agent Role**: You are the Backend Bug Fix Specialist for a hybrid Shopify app.
+
+**Affected File(s)**: `functions/config.js`
+
+**Description**: `SHOPIFY_WEBHOOK_SECRET` is defined with `default: ""` (line 24). Firebase Functions v2 `defineString` with an empty default means the function **deploys successfully** even when the secret is never set, and `verifyShopifyWebhook.js` will reach the `!secret` guard (returning HTTP 500) on every real request. There is no deploy-time validation that forces the operator to set the secret before going live.
+
+**Steps to Reproduce / Root Cause**: `config.js` line 24: `default: ""`. The correct approach is to omit the `default` entirely (making it a required param) so `firebase deploy` will fail fast if the environment variable is missing.
+
+**Technical Constraints**:
+- Fix only `functions/config.js`.
+- Do not change unrelated logic, navigation, or other phases' files.
+- The fix must be compatible with Expo SDK 55 and React Native 0.76+.
+
+**Dependencies**: `SHOPIFY_WEBHOOK_SECRET` is consumed only by `verifyShopifyWebhook.js`.
+
+**Deliverables**: Remove the `default: ""` option so deployment fails if the secret is not configured. Provide the corrected `config.js`.
+
+---
+
+**Bug ID**: BUG-11
+
+**Severity**: Medium
+
+**Status**: 🐛 Open
+
+**Agent Role**: You are the Frontend Bug Fix Specialist for a hybrid Shopify app.
+
+**Affected File(s)**: `src/screens/HomeScreen.js`
+
+**Description**: The injected viewport meta tag (line 42) sets `user-scalable=no`. Apple's App Store Review Guideline §4.2 and the WebKit accessibility requirements explicitly flag suppression of pinch-to-zoom as an accessibility violation. Apps submitted with this attribute are routinely rejected or required to remove it before approval, particularly since iOS 10 ignores this attribute anyway for native accessibility.
+
+**Steps to Reproduce / Root Cause**: Line 42:
+```js
+meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+```
+
+**Technical Constraints**:
+- Fix only `src/screens/HomeScreen.js`.
+- Do not change unrelated logic, navigation, or other phases' files.
+- The fix must be compatible with Expo SDK 55 and React Native 0.76+.
+
+**Dependencies**: Self-contained in the JS injection string.
+
+**Deliverables**: Remove `maximum-scale=1.0, user-scalable=no` from the viewport meta content. Provide the corrected `HomeScreen.js`.
+
+---
+
+**Bug ID**: BUG-12
+
+**Severity**: Medium
+
+**Status**: 🐛 Open
+
+**Agent Role**: You are the Frontend Bug Fix Specialist for a hybrid Shopify app.
+
+**Affected File(s)**: `App.js`
+
+**Description**: `App.js` does not initialise `Notifications.setNotificationHandler` at the app root level — this is currently called inside `InboxScreen.js` at module scope (line 23). Calling `setNotificationHandler` inside a screen module is fragile: if the user never navigates to the Inbox tab before a foreground notification arrives, the handler is not yet registered and the OS will use the default (no alert shown). For the App Store, App Review bots navigate directly to the Home tab, so foreground notifications during review will be silently suppressed.
+
+**Steps to Reproduce / Root Cause**: `InboxScreen.js` line 23: `Notifications.setNotificationHandler(…)` is at module scope of the `InboxScreen` module, not at the entry point. `App.js` has no notification handler setup.
+
+**Technical Constraints**:
+- Fix `App.js` (move handler there) and remove it from `src/screens/InboxScreen.js`.
+- Do not change unrelated logic, navigation, or other phases' files.
+- The fix must be compatible with Expo SDK 55 and React Native 0.76+.
+
+**Dependencies**: `setNotificationHandler` is called once globally; downstream consumers are `InboxScreen.js` (listener) and `notifications.js` (save logic).
+
+**Deliverables**: Move `Notifications.setNotificationHandler(…)` to `App.js` (before the navigator renders) and remove it from `InboxScreen.js`. Provide the corrected `App.js` and `InboxScreen.js`.
+
+---
+
+## QA Summary
+
+| Bug ID | Severity | File | One-line description |
+|--------|----------|------|----------------------|
+| BUG-1 | Critical | `src/utils/notifications.js` | Empty Firebase config committed to source — Firebase never initialises |
+| BUG-2 | Critical | `src/utils/notifications.js` | `getExpoPushTokenAsync()` missing required `projectId` — push token always null in production |
+| BUG-3 | High | `functions/fcm.js`, `src/utils/notifications.js` | Android channel ID mismatch (`"shopify_notifications"` vs `"default"`) silently drops all push on Android 8+ |
+| BUG-4 | High | `functions/verifyShopifyWebhook.js` | `timingSafeEqual` crashes on non-ASCII HMAC headers due to UTF-8 vs UTF-16 length mismatch |
+| BUG-5 | High | `src/screens/InboxScreen.js` | Async IIFE in `useEffect` missing `try/catch` — spinner hangs forever on any registration error |
+| BUG-6 | High | `src/screens/InboxScreen.js` | Async foreground listener callback unhandled — any StorageError causes unhandled promise rejection crash |
+| BUG-7 | High | `src/screens/HomeScreen.js` | No `onError`/`onHttpError` handler on WebView — native error page shown on network failure |
+| BUG-8 | High | `src/utils/notifications.js` | `import` statements appear after `initializeApp` call — import-order side-effect bug, ESM non-compliance |
+| BUG-9 | Medium | `HomeScreen.js`, `handlers/*.js` | Hardcoded store URL and `"all_staff"` FCM topic — white-label per-client config not externalised |
+| BUG-10 | Medium | `functions/config.js` | `SHOPIFY_WEBHOOK_SECRET` has `default: ""` — broken deploys succeed silently without the secret set |
+| BUG-11 | Medium | `src/screens/HomeScreen.js` | `user-scalable=no` in viewport meta violates App Store accessibility guidelines |
+| BUG-12 | Medium | `App.js`, `src/screens/InboxScreen.js` | `setNotificationHandler` called in screen module — not registered if user never visits Inbox tab |

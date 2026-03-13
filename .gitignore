@@ -1,0 +1,18 @@
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# macOS
+.DS_Store
+
+# local env files
+.env*.local
+.env
+
+# MacOS
+.DS_Store
